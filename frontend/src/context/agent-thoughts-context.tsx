@@ -3,35 +3,47 @@
 import { createContext, useContext, type ReactNode } from "react";
 
 import {
-  useAgentThoughtsWebSocket,
+  useAgentLogWebSocket,
+  type EscalationState,
+  type LlmTokenUsage,
   type ThoughtEvent,
-} from "@/hooks/useAgentThoughtsWebSocket";
-import type { AgentRole } from "@/lib/agents";
+} from "@/hooks/useAgentLog";
+import type { AgentRole, AgentStatus } from "@/lib/agents";
 
-export type AgentThoughtsContextValue = {
+export type AgentLogContextValue = {
   thoughts: ThoughtEvent[];
   thoughtsForAgent: (role: AgentRole) => ThoughtEvent[];
+  logForAgent: (role: AgentRole) => string[];
+  globalLog: string[];
+  statusByAgent: Record<AgentRole, AgentStatus>;
   connected: boolean;
   clear: () => void;
+  loopCounter: number;
+  escalation: EscalationState | null;
+  applyEscalationFromApi: (payload: EscalationState | null) => void;
+  beginGraphRun: () => void;
+  usageByAgent: Record<AgentRole, LlmTokenUsage>;
+  usageTotals: LlmTokenUsage;
 };
 
-const AgentThoughtsContext = createContext<AgentThoughtsContextValue | null>(
-  null
-);
+const AgentLogContext = createContext<AgentLogContextValue | null>(null);
 
 export function AgentThoughtsProvider({ children }: { children: ReactNode }) {
-  const value = useAgentThoughtsWebSocket();
+  const value = useAgentLogWebSocket();
   return (
-    <AgentThoughtsContext.Provider value={value}>
-      {children}
-    </AgentThoughtsContext.Provider>
+    <AgentLogContext.Provider value={value}>{children}</AgentLogContext.Provider>
   );
 }
 
-export function useAgentThoughts(): AgentThoughtsContextValue {
-  const ctx = useContext(AgentThoughtsContext);
+export function useAgentLog(): AgentLogContextValue {
+  const ctx = useContext(AgentLogContext);
   if (!ctx) {
-    throw new Error("useAgentThoughts must be used within AgentThoughtsProvider");
+    throw new Error("useAgentLog must be used within AgentThoughtsProvider");
   }
   return ctx;
+}
+
+/** @deprecated Use useAgentLog() */
+export function useAgentThoughts(): AgentLogContextValue {
+  return useAgentLog();
 }

@@ -22,13 +22,13 @@ import {
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <>
-      <Sidebar collapsible="icon">
+      <Sidebar collapsible="offcanvas">
         <SidebarHeader className="border-b border-sidebar-border px-2 py-3">
-          <div className="flex flex-col gap-0.5 group-data-[collapsible=icon]:items-center">
+          <div className="flex flex-col gap-0.5">
             <span className="truncate text-sm font-semibold tracking-tight">
               Agentic Office
             </span>
-            <span className="truncate text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
+            <span className="truncate text-xs text-muted-foreground">
               Multi-agent workspace
             </span>
           </div>
@@ -68,13 +68,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <SidebarRail />
       </Sidebar>
       <SidebarInset>
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-          <SidebarTrigger className="-ml-1" />
-          <div className="text-sm font-medium text-muted-foreground">
+        <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 sm:px-6">
+          <SidebarTrigger className="-ml-1 shrink-0" />
+          <div className="min-w-0 text-sm font-medium text-muted-foreground">
             Virtual office
           </div>
         </header>
-        <div className="flex flex-1 flex-col overflow-hidden">{children}</div>
+        <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col overflow-hidden px-4 sm:px-6">
+          {children}
+        </div>
       </SidebarInset>
     </>
   );

@@ -1,7 +1,9 @@
-# Environment
+# Environment (keep example files tracked)
 .env
 .env.local
 .env.*.local
+!.env.example
+!**/.env.example
 
 # Python
 __pycache__/
@@ -14,11 +16,20 @@ venv/
 .eggs/
 dist/
 build/
+*.egg
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
 
 # Node / Next.js
 node_modules/
 .next/
 out/
+.turbo/
+.vercel/
 *.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
@@ -34,7 +45,15 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 
-# Testing / coverage
-.coverage
-htmlcov/
-.pytest_cache/
+# Logs & local secrets
+*.log
+logs/
+*.pem
+
+# Local databases (dev / sqlite experiments)
+*.db
+*.sqlite
+*.sqlite3
+
+# Agent-generated artifacts (writer output, etc.)
+backend/storage/

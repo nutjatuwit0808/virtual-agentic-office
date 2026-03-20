@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 
 import { AGENTS, isAgentRole } from "@/lib/agents";
 import { AgentDeepDivePage } from "@/components/agent-deep-dive-page";
-import { buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button-variants";
 import { cn } from "@/lib/utils";
 
 type Props = { params: Promise<{ role: string }> };
@@ -17,7 +17,7 @@ export default async function AgentPage({ params }: Props) {
   if (!agent) notFound();
 
   return (
-    <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
+    <div className="flex flex-1 flex-col gap-6 py-4 md:py-6">
       <div className="flex items-center gap-3">
         <Link
           href="/"

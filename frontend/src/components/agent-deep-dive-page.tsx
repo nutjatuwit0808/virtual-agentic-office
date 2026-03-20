@@ -3,27 +3,20 @@
 import { useMemo } from "react";
 
 import type { AgentDefinition } from "@/lib/agents";
-import { useAgentThoughts } from "@/context/agent-thoughts-context";
+import { mockInterAgentChatForAgent } from "@/lib/mock-inter-agent-chat";
+import { useAgentLog } from "@/context/agent-thoughts-context";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 
-const mockInterAgentChat = [
-  { from: "pm", to: "researcher", text: "Can you summarize competitor positioning?" },
-  { from: "researcher", to: "pm", text: "Draft summary is in shared artifacts." },
-  { from: "dev", to: "qa", text: "Pushing build candidate for smoke tests." },
-];
-
 export function AgentDeepDivePage({ agent }: { agent: AgentDefinition }) {
-  const { thoughtsForAgent, connected } = useAgentThoughts();
+  const { thoughtsForAgent, connected } = useAgentLog();
   const monologue = useMemo(
     () => thoughtsForAgent(agent.id),
     [thoughtsForAgent, agent.id]
   );
-  const chatForAgent = mockInterAgentChat.filter(
-    (m) => m.from === agent.id || m.to === agent.id
-  );
+  const chatForAgent = mockInterAgentChatForAgent(agent.id);
 
   return (
     <div className="grid max-w-4xl gap-6">

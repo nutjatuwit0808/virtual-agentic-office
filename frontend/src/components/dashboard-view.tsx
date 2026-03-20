@@ -1,19 +1,31 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import GridLayout, { type Layout, verticalCompactor } from "react-grid-layout";
-import "react-grid-layout/css/styles.css";
-import "react-resizable/css/styles.css";
-import Link from "next/link";
-import { GripVertical, Loader2, Play } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
+import {
+  DndContext,
+  type DragEndEvent,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  rectSortingStrategy,
+} from "@dnd-kit/sortable";
+import { Loader2, Play } from "lucide-react";
 
-import { AGENTS, type AgentRole, type AgentStatus } from "@/lib/agents";
+import { SortableAgentCard } from "@/components/agent-card";
+import { ManagerInterventionPanel } from "@/components/manager-intervention-panel";
+import { AGENTS, type AgentRole } from "@/lib/agents";
 import { getApiBaseUrl } from "@/lib/env";
-import { useAgentThoughts } from "@/context/agent-thoughts-context";
+import { useAgentLog } from "@/context/agent-thoughts-context";
+import { LOOP_WARNING_THRESHOLD } from "@/lib/office-ui";
+import type { EscalationState } from "@/hooks/useAgentLog";
 import { AgentDeepDiveSheet } from "@/components/agent-deep-dive-sheet";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -22,84 +34,135 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
+import { OutputGallery } from "@/components/output-gallery";
+import { cn } from "@/lib/utils";
 
-const defaultLayout: Layout = [
-  { i: "pm", x: 0, y: 0, w: 3, h: 9, minW: 2, minH: 4 },
-  { i: "researcher", x: 3, y: 0, w: 3, h: 9, minW: 2, minH: 4 },
-  { i: "dev", x: 6, y: 0, w: 3, h: 9, minW: 2, minH: 4 },
-  { i: "qa", x: 9, y: 0, w: 3, h: 9, minW: 2, minH: 4 },
-  { i: "thoughts", x: 0, y: 9, w: 12, h: 7, minW: 4, minH: 4 },
-];
-
-const statusLabel: Record<AgentStatus, string> = {
-  idle: "Idle",
-  thinking: "Thinking",
-  working: "Working",
-};
-
-function statusVariant(
-  s: AgentStatus
-): "secondary" | "default" | "outline" {
-  if (s === "working") return "default";
-  if (s === "thinking") return "secondary";
-  return "outline";
-}
-
-function deriveStatuses(
-  thoughts: { agent: string; ts: number }[]
-): Record<AgentRole, AgentStatus> {
-  const base: Record<AgentRole, AgentStatus> = {
-    pm: "idle",
-    researcher: "idle",
-    dev: "idle",
-    qa: "idle",
-  };
-  const now = Date.now() / 1000;
-  const recent = 2.5;
-  for (const t of thoughts) {
-    const role = t.agent.toLowerCase() as AgentRole;
-    if (role in base && now - t.ts < recent) {
-      base[role] = "working";
-    }
-  }
-  return base;
+function agentById(id: AgentRole) {
+  return AGENTS.find((a) => a.id === id)!;
 }
 
 export function DashboardView() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(1200);
-  const [layout, setLayout] = useState<Layout>(defaultLayout);
+  const [order, setOrder] = useState<AgentRole[]>(() =>
+    AGENTS.map((a) => a.id)
+  );
   const [sheetAgentId, setSheetAgentId] = useState<AgentRole | null>(null);
   const [graphRunning, setGraphRunning] = useState(false);
-  const { thoughts, connected, thoughtsForAgent } = useAgentThoughts();
+  const [galleryRefresh, setGalleryRefresh] = useState(0);
+  const [workflowTopic, setWorkflowTopic] = useState("Research → write cycle");
+  const [humanFeedback, setHumanFeedback] = useState("");
+  const {
+    connected,
+    thoughtsForAgent,
+    statusByAgent,
+    logForAgent,
+    globalLog,
+    loopCounter,
+    escalation,
+    applyEscalationFromApi,
+    beginGraphRun,
+    usageByAgent,
+    usageTotals,
+  } = useAgentLog();
 
-  const statuses = useMemo(() => deriveStatuses(thoughts), [thoughts]);
+  const escalationMode = escalation !== null;
 
-  useLayoutEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width;
-      if (w) setWidth(Math.floor(w));
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    })
+  );
+
+  const onDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setOrder((items) => {
+      const oldIndex = items.indexOf(active.id as AgentRole);
+      const newIndex = items.indexOf(over.id as AgentRole);
+      if (oldIndex < 0 || newIndex < 0) return items;
+      return arrayMove(items, oldIndex, newIndex);
     });
-    ro.observe(el);
-    setWidth(Math.floor(el.getBoundingClientRect().width));
-    return () => ro.disconnect();
   }, []);
 
-  const onLayoutChange = useCallback((next: Layout) => {
-    setLayout(next);
-  }, []);
+  const parseEscalationFromState = (
+    threadId: string,
+    artifacts: Record<string, unknown> | undefined
+  ): EscalationState => {
+    const summary = String(artifacts?.escalation_summary ?? "");
+    const rawOpts = artifacts?.escalation_options;
+    const options: EscalationState["options"] = [];
+    if (Array.isArray(rawOpts)) {
+      for (const o of rawOpts) {
+        if (!o || typeof o !== "object") continue;
+        const ob = o as Record<string, unknown>;
+        const id = String(ob.id ?? "");
+        if (!id) continue;
+        options.push({
+          id,
+          label: String(ob.label ?? id),
+          description: String(ob.description ?? ""),
+        });
+      }
+    }
+    return { threadId, summary, options };
+  };
 
   const runWorkflow = async () => {
+    const topic = workflowTopic.trim();
+    if (!topic) return;
     setGraphRunning(true);
+    beginGraphRun();
     try {
+      const body: { topic: string; human_feedback?: string } = { topic };
+      const fb = humanFeedback.trim();
+      if (fb) body.human_feedback = fb;
       const res = await fetch(`${getApiBaseUrl()}/api/graph/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: "Research & develop cycle" }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(await res.text());
+      const data = (await res.json()) as {
+        interrupted?: boolean;
+        thread_id?: string;
+        state?: { artifacts?: Record<string, unknown> };
+      };
+      if (data.interrupted && data.thread_id) {
+        applyEscalationFromApi(
+          parseEscalationFromState(
+            data.thread_id,
+            data.state?.artifacts
+          )
+        );
+      }
+      setGalleryRefresh((n) => n + 1);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setGraphRunning(false);
+    }
+  };
+
+  const resumeEscalation = async (
+    choice: "force_approve" | "change_instructions" | "terminate",
+    newInstructions?: string
+  ) => {
+    const tid = escalation?.threadId;
+    if (!tid) return;
+    setGraphRunning(true);
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/api/graph/resume`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          thread_id: tid,
+          choice,
+          new_instructions: newInstructions,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      applyEscalationFromApi(null);
+      setGalleryRefresh((n) => n + 1);
     } catch (e) {
       console.error(e);
     } finally {
@@ -113,144 +176,174 @@ export function DashboardView() {
   );
 
   return (
-    <div className="flex flex-1 flex-col gap-4 overflow-auto p-4 md:p-6">
+    <div className="flex flex-1 flex-col gap-4 overflow-auto py-4 md:py-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
           <p className="text-sm text-muted-foreground">
-            Drag tiles to rearrange. Click an agent for a deep dive.
+            Drag agent cards to reorder. Click an agent for a deep dive.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={connected ? "default" : "secondary"}>
-            {connected ? "Live thoughts" : "WS disconnected"}
-          </Badge>
-          <Button
-            size="sm"
-            onClick={runWorkflow}
-            disabled={graphRunning}
-            className="gap-2"
-          >
-            {graphRunning ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Play className="size-4" />
-            )}
-            Run research & develop
-          </Button>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Badge variant={connected ? "default" : "secondary"}>
+              {connected ? "Live thoughts" : "WS disconnected"}
+            </Badge>
+            <Button
+              size="sm"
+              onClick={runWorkflow}
+              disabled={graphRunning || !workflowTopic.trim()}
+              className="gap-2"
+            >
+              {graphRunning ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Play className="size-4" />
+              )}
+              Run research → develop → write
+            </Button>
+          </div>
+          <p className="text-xs tabular-nums text-muted-foreground">
+            API tokens (session): Σ{" "}
+            {usageTotals.total.toLocaleString()} · in{" "}
+            {usageTotals.input.toLocaleString()} · out{" "}
+            {usageTotals.output.toLocaleString()}
+          </p>
         </div>
       </div>
 
-      <div ref={containerRef} className="min-h-[520px] w-full max-w-full">
-        {width > 0 && (
-          <GridLayout
-            className="layout"
-            layout={layout}
-            width={width}
-            gridConfig={{
-              cols: 12,
-              rowHeight: 28,
-              margin: [12, 12],
-              containerPadding: [0, 0],
-            }}
-            dragConfig={{ enabled: true, handle: ".drag-handle" }}
-            compactor={verticalCompactor}
-            onLayoutChange={onLayoutChange}
+      <Card className="border shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Workflow input</CardTitle>
+          <CardDescription>
+            Topic is sent to <code className="text-xs">POST /api/graph/run</code>.
+            Optional note is stored as long-term memory context for this run.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <label
+              htmlFor="workflow-topic"
+              className="text-sm font-medium leading-none"
+            >
+              Topic
+            </label>
+            <Input
+              id="workflow-topic"
+              value={workflowTopic}
+              onChange={(e) => setWorkflowTopic(e.target.value)}
+              maxLength={500}
+              placeholder="What should the office work on?"
+              disabled={graphRunning}
+              aria-invalid={!workflowTopic.trim()}
+            />
+            <p className="text-xs text-muted-foreground">
+              {workflowTopic.length}/500 · required
+            </p>
+          </div>
+          <div className="space-y-2">
+            <label
+              htmlFor="workflow-feedback"
+              className="text-sm font-medium leading-none"
+            >
+              Memory note <span className="font-normal text-muted-foreground">(optional)</span>
+            </label>
+            <textarea
+              id="workflow-feedback"
+              value={humanFeedback}
+              onChange={(e) => setHumanFeedback(e.target.value)}
+              maxLength={8000}
+              placeholder="Constraints, audience, tone, or links the agents should respect…"
+              disabled={graphRunning}
+              rows={3}
+              className={cn(
+                "min-h-[72px] w-full resize-y rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30"
+              )}
+            />
+            <p className="text-xs text-muted-foreground">
+              {humanFeedback.length}/8000
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {escalationMode && escalation ? (
+        <ManagerInterventionPanel
+          threadId={escalation.threadId}
+          summary={escalation.summary}
+          options={escalation.options}
+          disabled={graphRunning}
+          onResume={(choice, newInstructions) =>
+            resumeEscalation(choice, newInstructions)
+          }
+        />
+      ) : null}
+
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={onDragEnd}
+      >
+        <SortableContext items={order} strategy={rectSortingStrategy}>
+          <div
+            className={
+              escalationMode
+                ? "pointer-events-none"
+                : undefined
+            }
           >
-            {AGENTS.map((agent) => (
-              <div key={agent.id} className="rounded-xl">
-                <Card className="h-full border shadow-sm">
-                  <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pb-2">
-                    <div className="min-w-0">
-                      <button
-                        type="button"
-                        className="drag-handle cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
-                        aria-label="Drag to move tile"
-                      >
-                        <GripVertical className="size-5" />
-                      </button>
-                      <CardTitle className="truncate text-base">
-                        {agent.name}
-                      </CardTitle>
-                      <CardDescription className="truncate">
-                        {agent.title}
-                      </CardDescription>
-                    </div>
-                    <Badge variant={statusVariant(statuses[agent.id])}>
-                      {statusLabel[statuses[agent.id]]}
-                    </Badge>
-                  </CardHeader>
-                  <CardContent className="flex flex-col gap-2">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="w-full"
-                      onClick={() => setSheetAgentId(agent.id)}
-                    >
-                      Deep dive
-                    </Button>
-                    <Link
-                      href={`/agents/${agent.id}`}
-                      className={cn(
-                        buttonVariants({ variant: "ghost", size: "sm" }),
-                        "w-full justify-center"
-                      )}
-                    >
-                      Full page
-                    </Link>
-                  </CardContent>
-                </Card>
-              </div>
-            ))}
-            <div key="thoughts" className="rounded-xl">
-              <Card className="h-full border shadow-sm">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Agent thought stream</CardTitle>
-                  <CardDescription>
-                    WebSocket feed from <code className="text-xs">/ws/agent-thoughts</code>
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center gap-2 pb-2">
-                    <button
-                      type="button"
-                      className="drag-handle cursor-grab text-muted-foreground hover:text-foreground"
-                      aria-label="Drag to move panel"
-                    >
-                      <GripVertical className="size-5" />
-                    </button>
-                  </div>
-                  <ScrollArea className="h-[180px] rounded-md border bg-muted/20 p-3">
-                    {thoughts.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        Connect the backend and run the workflow to see thoughts.
-                      </p>
-                    ) : (
-                      <ul className="space-y-2 text-sm">
-                        {thoughts.slice(-40).map((t, i) => (
-                          <li key={`${t.ts}-${i}`} className="leading-snug">
-                            <span className="font-medium text-primary">
-                              {t.agent}
-                            </span>
-                            <span className="text-muted-foreground"> · </span>
-                            {t.thought}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </ScrollArea>
-                </CardContent>
-              </Card>
+            <div className="grid w-full max-w-full grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+              {order.map((id) => (
+                <SortableAgentCard
+                  key={id}
+                  agent={agentById(id)}
+                  status={statusByAgent[id]}
+                  logLines={logForAgent(id)}
+                  llmUsage={usageByAgent[id]}
+                  onDeepDive={() => setSheetAgentId(id)}
+                  dimmed={escalationMode}
+                  showLoopWarning={loopCounter >= LOOP_WARNING_THRESHOLD}
+                />
+              ))}
             </div>
-          </GridLayout>
-        )}
-      </div>
+          </div>
+        </SortableContext>
+      </DndContext>
+
+      <Card className="border shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Agent activity stream</CardTitle>
+          <CardDescription>
+            Live log from <code className="text-xs">/ws/agent-thoughts</code>{" "}
+            (thoughts, nodes, tools, stream chunks, API token events)
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ScrollArea className="h-[180px] rounded-md border bg-muted/20 p-3">
+            {globalLog.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Connect the backend and run the workflow to see the stream.
+              </p>
+            ) : (
+              <ul className="space-y-1.5 font-mono text-xs leading-snug">
+                {globalLog.slice(-40).map((line, i) => (
+                  <li key={i} className="break-words">
+                    {line}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </ScrollArea>
+        </CardContent>
+      </Card>
+
+      <OutputGallery refreshKey={galleryRefresh} />
 
       <AgentDeepDiveSheet
         agent={sheetAgent}
         open={sheetAgentId !== null}
         onOpenChange={(o) => !o && setSheetAgentId(null)}
-        status={sheetAgent ? statuses[sheetAgent.id] : "idle"}
+        status={sheetAgent ? statusByAgent[sheetAgent.id] : "idle"}
         thoughts={sheetAgent ? thoughtsForAgent(sheetAgent.id) : []}
       />
     </div>

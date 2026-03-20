@@ -1,36 +1,79 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Frontend — Agentic Office Dashboard
 
-## Getting Started
+แอป **[Next.js 14](https://nextjs.org/)** (App Router) แดชบอร์ดสำหรับรัน office workflow, ดู log/ความคิดเอเจนต์แบบเรียลไทม์ และจัดการ escalation
 
-First, run the development server:
+การติดตั้งและ URL พื้นฐาน: [`../README.md`](../README.md)
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Architecture
+
+### App Router และหน้าหลัก
+
+```mermaid
+flowchart TB
+  subgraph app["src/app"]
+    Root["/ page.tsx"]
+    Agents["/agents/[role]/page.tsx"]
+    Settings["/settings/page.tsx"]
+    Layout["layout.tsx + globals.css"]
+  end
+  Root --> DV[DashboardView]
+  Agents --> DeepDive[Agent deep-dive UI]
+  Settings --> SettingsUI[Settings]
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### การไหลของข้อมูล
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```mermaid
+flowchart LR
+  subgraph client["Browser"]
+    DV[DashboardView]
+    CTX[AgentThoughtsProvider]
+    Hook[useAgentLog]
+  end
+  subgraph backend["Backend :8000"]
+    API["HTTP /api/*"]
+    WS["WebSocket /ws/agent-thoughts"]
+  end
+  DV -->|POST /api/graph/run, /api/graph/resume| API
+  CTX --> Hook
+  Hook -->|WebSocket| WS
+  API --> DV
+  WS --> Hook
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- **HTTP:** `getApiBaseUrl()` จาก `NEXT_PUBLIC_API_URL` (ค่าเริ่ม `http://localhost:8000`) — ใช้ใน `dashboard-view.tsx` สำหรับรันกราฟและ resume escalation
+- **WebSocket:** `getWsBaseUrl()` + path `/ws/agent-thoughts` — สร้างใน `useAgentLog.ts` (`useAgentLogWebSocket`)
 
-## Learn More
+## โฟลเดอร์สำคัญ
 
-To learn more about Next.js, take a look at the following resources:
+| Path | เนื้อหา |
+|------|---------|
+| `src/app/` | Routes: หน้าแรก (แดชบอร์ด), `/agents/[role]`, `/settings`, layout |
+| `src/components/` | UI หลัก: `dashboard-view`, `manager-intervention-panel`, `output-gallery`, `agent-deep-dive-*`, `app-shell`, ฯลฯ |
+| `src/context/` | `agent-thoughts-context` — wrap แอปด้วย provider สำหรับ log/สถานะ |
+| `src/hooks/` | `useAgentLog` — subscription WebSocket, สถานะเอเจนต์, escalation, token usage |
+| `src/lib/` | `agents.ts` (บทบาท), `env.ts` (base URL), `office-ui.ts` ฯลฯ |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## การรัน
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+cd frontend
+npm install
+cp .env.example .env.local   # ทางเลือก
+npm run dev
+```
 
-## Deploy on Vercel
+เปิด [http://localhost:3000](http://localhost:3000)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Environment variables
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+จาก [`.env.example`](.env.example):
+
+| Variable | คำอธิบาย |
+|----------|-----------|
+| `NEXT_PUBLIC_API_URL` | Base URL ของ FastAPI (ค่าเริ่ม `http://localhost:8000`) |
+| `NEXT_PUBLIC_WS_URL` | Base ของ WebSocket (ค่าเริ่ม `ws://localhost:8000`; client ต่อ path `/ws/agent-thoughts`) |
+
+## หมายเหตุ
+
+- การสมัครรับความคิดเอเจนต์ใช้ **`useAgentLog` / `useAgentLogWebSocket`** ใน `useAgentLog.ts` — ไม่ใช้ไฟล์ `useAgentThoughtsWebSocket` แยก (ถ้าเคยอ้างอิงในเอกสารเก่าให้ใช้ hook ปัจจุบันแทน)

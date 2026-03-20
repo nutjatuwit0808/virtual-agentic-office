@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 
 import type { AgentDefinition, AgentStatus } from "@/lib/agents";
-import type { ThoughtEvent } from "@/hooks/useAgentThoughtsWebSocket";
+import type { ThoughtEvent } from "@/lib/agent-log-types";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -17,6 +17,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
+import { mockInterAgentChatForAgent } from "@/lib/mock-inter-agent-chat";
 
 const statusLabel: Record<AgentStatus, string> = {
   idle: "Idle",
@@ -31,12 +32,6 @@ function statusVariant(
   if (s === "thinking") return "secondary";
   return "outline";
 }
-
-const mockInterAgentChat = [
-  { from: "pm", to: "researcher", text: "Can you summarize competitor positioning?" },
-  { from: "researcher", to: "pm", text: "Draft summary is in shared artifacts." },
-  { from: "dev", to: "qa", text: "Pushing build candidate for smoke tests." },
-];
 
 type Props = {
   agent: AgentDefinition | null;
@@ -58,9 +53,7 @@ export function AgentDeepDiveSheet({
   const monologue = thoughts.filter(
     (t) => t.agent.toLowerCase() === agent.id
   );
-  const chatForAgent = mockInterAgentChat.filter(
-    (m) => m.from === agent.id || m.to === agent.id
-  );
+  const chatForAgent = mockInterAgentChatForAgent(agent.id);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
